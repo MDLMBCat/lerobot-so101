@@ -65,6 +65,11 @@ from pathlib import Path
 from pprint import pformat
 from typing import Any
 
+#yz: imports for performance monitor
+import statistics
+import torch
+from collections import deque
+
 from lerobot.cameras import (  # noqa: F401
     CameraConfig,  # noqa: F401
 )
@@ -260,6 +265,33 @@ def record_loop(
     if dataset is not None and dataset.fps != fps:
         raise ValueError(f"The dataset fps should be equal to requested fps ({dataset.fps} != {fps}).")
 
+
+    # yz: Initialize performence monitor
+    # detecting device type
+    device_info = {}
+    inference_times = deque(maxlen=100) # store latest 100 inference times
+    total_times = deque(maxlen=100) # store latest 100 total times
+    
+    if policy is not None:
+        device = get_safe_torch_device(policy.config.device)
+        device_info = {
+            "device_type": device.type.upper(),
+            "device_name": str(device),
+            "is_gpu": device.type == "cuda",
+            "is_cpu": device.type == "cpu",
+        }
+        if device.type == "cuda":
+            device_info["gpu_name"] = torch.cuda.get_device_name(device)
+            device_info["gpu_memory"] = f"{torch.cuda.get_device_properties(device).total_memory / 1e9:.2f} GB"
+          
+        logging.info("=" * 60)
+        logging.info("Performance Monitor:")
+        logging.info(f"Device Type: {device_info['device_type']}")
+        if device_info.get('gpu_name'):
+            logging.info(f"GPU Name: {device_info['gpu_name']}") 
+            logging.info(f"GPU Memory: {device_info['gpu_memory']}") 
+        logging.info("=" * 60)
+            
     teleop_arm = teleop_keyboard = None
     if isinstance(teleop, list):
         teleop_keyboard = next((t for t in teleop if isinstance(t, KeyboardTeleop)), None)
@@ -280,6 +312,7 @@ def record_loop(
                 "For multi-teleop, the list must contain exactly one KeyboardTeleop and one arm teleoperator. Currently only supported for LeKiwi robot."
             )
 
+
     # Reset policy and processor if they are provided
     if policy is not None and preprocessor is not None and postprocessor is not None:
         policy.reset()
@@ -288,6 +321,7 @@ def record_loop(
 
     timestamp = 0
     start_episode_t = time.perf_counter()
+    # frame_count = 0 # yz: count the number of frames processed
     while timestamp < control_time_s:
         start_loop_t = time.perf_counter()
 
@@ -306,6 +340,9 @@ def record_loop(
 
         # Get action from either policy or teleop
         if policy is not None and preprocessor is not None and postprocessor is not None:
+            # yz: start time for inference
+            inference_start = time.perf_counter()
+            
             action_values = predict_action(
                 observation=observation_frame,
                 policy=policy,
@@ -319,6 +356,10 @@ def record_loop(
 
             act_processed_policy: RobotAction = make_robot_action(action_values, dataset.features)
 
+            # yz: end time for inference
+            inference_time = time.perf_counter() - inference_start
+            inference_times.append(inference_time)
+            
         elif policy is None and isinstance(teleop, Teleoperator):
             act = teleop.get_action()
 
@@ -348,6 +389,11 @@ def record_loop(
             action_values = act_processed_teleop
             robot_action_to_send = robot_action_processor((act_processed_teleop, obs))
 
+        # yz: record the total time for sending action to robot
+        if policy is not None:
+            total_time = time.perf_counter() - inference_start
+            total_times.append(total_time)
+            
         # Send action to robot
         # Action can eventually be clipped using `max_relative_target`,
         # so action actually sent is saved in the dataset. action = postprocessor.process(action)
@@ -363,10 +409,40 @@ def record_loop(
         if display_data:
             log_rerun_data(observation=obs_processed, action=action_values)
 
+               
         dt_s = time.perf_counter() - start_loop_t
         precise_sleep(1 / fps - dt_s)
 
         timestamp = time.perf_counter() - start_episode_t
+        
+        # yz: Print performance stats after recording loop ends
+        if policy is not None and len(inference_times) > 0:
+            avg_inference = statistics.mean(inference_times)
+            min_inference = min(inference_times)
+            max_inference = max(inference_times)
+            avg_total = statistics.mean(total_times) if len(total_times) > 0 else 0
+            min_total = min(total_times) if len(total_times) > 0 else 0
+            max_total = max(total_times) if len(total_times) > 0 else 0
+            
+            logging.info("=" * 60)
+            logging.info("PERFORMANCE SUMMARY (Recording Complete)")
+            logging.info(f"Device: {device_info.get('device_type', 'UNKNOWN')}")
+            if device_info.get('gpu_name'):
+                logging.info(f"GPU: {device_info['gpu_name']}")
+            logging.info(f"Total Frames Processed: {len(inference_times)}")
+            logging.info("")
+            logging.info("VLA Inference Time:")
+            logging.info(f"  Average: {avg_inference*1000:.2f} ms")
+            logging.info(f"  Min:     {min_inference*1000:.2f} ms")
+            logging.info(f"  Max:     {max_inference*1000:.2f} ms")
+            logging.info("")
+            logging.info("Total Time (VLA → Robot Action):")
+            logging.info(f"  Average: {avg_total*1000:.2f} ms")
+            logging.info(f"  Min:     {min_total*1000:.2f} ms")
+            logging.info(f"  Max:     {max_total*1000:.2f} ms")
+            if avg_total > 0:
+                logging.info(f"  Average FPS: {1.0/avg_total:.1f}")
+            logging.info("=" * 60)
 
 
 @parser.wrap()
