@@ -1,3 +1,4 @@
+<<<<<<< HEAD
 <p align="center">
   <img alt="LeRobot, Hugging Face Robotics Library" src="https://raw.githubusercontent.com/huggingface/lerobot/main/media/lerobot-logo-thumbnail.png" width="100%">
   <br/>
@@ -342,3 +343,6 @@ If you want, you can cite this work with:
 ## Star History
 
 [![Star History Chart](https://api.star-history.com/svg?repos=huggingface/lerobot&type=Timeline)](https://star-history.com/#huggingface/lerobot&Timeline)
+=======
+# lerobot-so101
+>>>>>>> d06e99af215b2f4e7014241d04c4faa2c0fce8e0

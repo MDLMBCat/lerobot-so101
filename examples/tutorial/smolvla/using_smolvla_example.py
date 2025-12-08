@@ -19,6 +19,7 @@ def main():
 
     model = SmolVLAPolicy.from_pretrained(model_id)
 
+    preprocess_time = 0
     inference_time = 0
     steps = 0
 
@@ -57,6 +58,8 @@ def main():
 
     for _ in range(MAX_EPISODES):
         for _ in range(MAX_STEPS_PER_EPISODE):
+            preprocess_start_time = time.perf_counter()
+            
             obs = robot.get_observation()
             obs_frame = build_inference_frame(
                 observation=obs, ds_features=dataset_features, device=device, task=task, robot_type=robot_type
@@ -64,7 +67,10 @@ def main():
 
             obs = preprocess(obs_frame)
 
-            start_time = time.perf_counter()
+            preprocess_elapsed_time = time.perf_counter() - preprocess_start_time
+            preprocess_time += preprocess_elapsed_time
+            
+            inference_start_time = time.perf_counter()
             
             action = model.select_action(obs)
             action = postprocess(action)
@@ -73,16 +79,18 @@ def main():
             if device.type == "cuda":
                 torch.cuda.synchronize()
             
-            end_time = time.perf_counter()
-            elapsed_time = end_time - start_time
-            inference_time += elapsed_time
+            inference_elapsed_time = time.perf_counter() - inference_start_time
+            inference_time += inference_elapsed_time
             steps += 1
             
             robot.send_action(action)
 
         print("Episode finished! Starting new episode...")
         
+    average_preprocess_time = preprocess_time / steps    
     average_inference_time = inference_time / steps
+    
+    print(f"Average Preprocess time: {average_preprocess_time*1000:.2f} milliseconds")
     print(f"Average Inference time: {average_inference_time*1000:.2f} milliseconds")
 
 

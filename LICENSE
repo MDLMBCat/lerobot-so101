@@ -208,6 +208,9 @@ Copyright 2024 The Hugging Face team. All rights reserved.
 MIT License
 
 Copyright (c) 2023 Columbia Artificial Intelligence and Robotics Lab
+MIT License
+
+Copyright (c) 2025 Yuyang Zhang
 
 Permission is hereby granted, free of charge, to any person obtaining a copy
 of this software and associated documentation files (the "Software"), to deal
@@ -226,6 +229,7 @@ AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
 LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
+<<<<<<< HEAD
 
 
 ## Some of lerobot's code is derived from FOWM, which is subject to the following copyright notice:
@@ -505,3 +509,5 @@ SOFTWARE.
    WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
    See the License for the specific language governing permissions and
    limitations under the License.
+=======
+>>>>>>> d06e99af215b2f4e7014241d04c4faa2c0fce8e0
