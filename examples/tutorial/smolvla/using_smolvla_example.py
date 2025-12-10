@@ -8,9 +8,10 @@ from lerobot.policies.smolvla.modeling_smolvla import SmolVLAPolicy
 from lerobot.policies.utils import build_inference_frame, make_robot_action
 from lerobot.robots.so101_follower.config_so101_follower import SO101FollowerConfig
 from lerobot.robots.so101_follower.so101_follower import SO101Follower
+from lerobot.utils.constants import ACTION
+from lerobot.utils.visualization_utils import init_rerun, log_rerun_data
 
-MAX_EPISODES = 20
-MAX_STEPS_PER_EPISODE = 20
+MAX_STEPS = 1000
 
 def main():
     # device = torch.device("mps")  # or "cuda" or "cpu"
@@ -18,9 +19,15 @@ def main():
     model_id = "yz31/smolvla_v1"
 
     model = SmolVLAPolicy.from_pretrained(model_id)
+    model.eval()
 
+    model.to(device)
+    
     preprocess_time = 0
-    inference_time = 0
+    postprocess_time = 0
+    chunk_generation_count = 0
+    total_chunk_generation_time = 0
+    total_action_generation_time = 0
     steps = 0
 
     preprocess, postprocess = make_pre_post_processors(
@@ -40,8 +47,8 @@ def main():
     # Camera keys must match the name and resolutions of the ones used for training!
     # You can check the camera keys expected by a model in the info.json card on the model card on the Hub
     camera_config = {
-        "camera1": OpenCVCameraConfig(index_or_path=0, width=640, height=480, fps=30),
-        "camera2": OpenCVCameraConfig(index_or_path=2, width=640, height=480, fps=30),
+        "camera1": OpenCVCameraConfig(index_or_path=2, width=640, height=480, fps=30),
+        "camera2": OpenCVCameraConfig(index_or_path=0, width=640, height=480, fps=30),
     }
 
     robot_cfg = SO101FollowerConfig(port=follower_port, id=follower_id, cameras=camera_config)
@@ -56,43 +63,66 @@ def main():
     obs_features = hw_to_dataset_features(robot.observation_features, "observation")
     dataset_features = {**action_features, **obs_features}
 
-    for _ in range(MAX_EPISODES):
-        for _ in range(MAX_STEPS_PER_EPISODE):
-            preprocess_start_time = time.perf_counter()
-            
-            obs = robot.get_observation()
-            obs_frame = build_inference_frame(
-                observation=obs, ds_features=dataset_features, device=device, task=task, robot_type=robot_type
-            )
 
-            obs = preprocess(obs_frame)
+    init_rerun(session_name="smolvla_example")
 
-            preprocess_elapsed_time = time.perf_counter() - preprocess_start_time
-            preprocess_time += preprocess_elapsed_time
-            
-            inference_start_time = time.perf_counter()
-            
-            action = model.select_action(obs)
-            action = postprocess(action)
-            action = make_robot_action(action, dataset_features)
-            
-            if device.type == "cuda":
-                torch.cuda.synchronize()
-            
-            inference_elapsed_time = time.perf_counter() - inference_start_time
-            inference_time += inference_elapsed_time
-            steps += 1
-            
-            robot.send_action(action)
-
-        print("Episode finished! Starting new episode...")
+    for _ in range(MAX_STEPS):
+        preprocess_start_time = time.perf_counter()
         
-    average_preprocess_time = preprocess_time / steps    
-    average_inference_time = inference_time / steps
-    
-    print(f"Average Preprocess time: {average_preprocess_time*1000:.2f} milliseconds")
-    print(f"Average Inference time: {average_inference_time*1000:.2f} milliseconds")
+        obs = robot.get_observation()
+        
+        log_rerun_data(observation=obs)
+        
+        obs_frame = build_inference_frame(
+            observation=obs, ds_features=dataset_features, device=device, task=task, robot_type=robot_type
+        )
 
+        obs = preprocess(obs_frame)
 
+        preprocess_elapsed_time = time.perf_counter() - preprocess_start_time
+        preprocess_time += preprocess_elapsed_time
+        
+        will_generate_chunk = len(model._queues[ACTION]) == 0
+        
+        inference_start_time = time.perf_counter()
+        
+        action = model.select_action(obs)
+        
+        if device.type == "cuda":
+            torch.cuda.synchronize()
+            
+        inference_elapsed_time = time.perf_counter() - inference_start_time
+        
+        postprocess_start_time = time.perf_counter()
+        action = postprocess(action)
+        action = make_robot_action(action, dataset_features)
+            
+        if will_generate_chunk:
+            chunk_generation_count += 1
+            total_chunk_generation_time += inference_elapsed_time
+        
+        steps += 1
+        
+        robot.send_action(action)
+        
+        postprocess_elapsed_time = time.perf_counter() - postprocess_start_time
+        postprocess_time += postprocess_elapsed_time
+        total_action_generation_time += preprocess_elapsed_time + inference_elapsed_time + postprocess_elapsed_time
+
+    if chunk_generation_count > 0:    
+        average_preprocess_time = preprocess_time / steps
+        average_postprocess_time = postprocess_time / steps
+        average_step_generation_time = total_chunk_generation_time / steps
+        average_chunk_generation_time = total_chunk_generation_time / chunk_generation_count
+        average_action_generation_time = total_action_generation_time / steps
+        average_theoretical_fps = 1 / average_action_generation_time
+        
+        print(f"Average chunk generation time: {average_chunk_generation_time:.4f} seconds ({average_chunk_generation_time*1000:.2f} miliseconds)")
+        print(f"Average preprocess time: {average_preprocess_time*1000:.2f} milliseconds")
+        print(f"Average postprocess time: {average_postprocess_time*1000:.2f} milliseconds")
+        print(f"Average step generation time: {average_step_generation_time:.4f} seconds ({average_step_generation_time*1000:.2f} milliseconds)")
+        print(f"Average action generation time: {average_action_generation_time:.4f} seconds ({average_action_generation_time*1000:.2f} milliseconds)")
+        print(f"Average theoretical FPS: {average_theoretical_fps:.2f}")
+        
 if __name__ == "__main__":
     main()
